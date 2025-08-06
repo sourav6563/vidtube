@@ -1,0 +1,26 @@
+{
+  "name": "vidtube",
+  "version": "1.0.0",
+  "description": "vidtube inspired by youtube",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "keywords": [
+    "nodejs",
+    "express",
+    "mongoose",
+    "backend"
+  ],
+  "author": "sourav mahato",
+  "license": "ISC",
+  "devDependencies": {
+    "nodemon": "^3.1.10",
+    "prettier": "^3.6.2"
+  },
+  "dependencies": {
+    "mongoose": "^8.17.0"
+  }
+}
