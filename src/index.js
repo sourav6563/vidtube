@@ -4,6 +4,11 @@ import { app } from "./app.js";
 import dotenv from "dotenv";
 import { connectDB } from "./database/index.js";
 
+// import crypto from "crypto";
+
+// const refreshTokenSecret = crypto.randomBytes(32).toString("hex");
+// console.log(refreshTokenSecret);
+
 dotenv.config();
 const morganFormat = ":method :url :status :response-time ms";
 app.use(
