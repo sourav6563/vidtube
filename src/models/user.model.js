@@ -2,7 +2,6 @@ import mongoose, { Schema, model } from "mongoose";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 
-
 const userSchema = new Schema(
   {
     username: {
@@ -52,7 +51,7 @@ const userSchema = new Schema(
 );
 //never and never use aroow function in pre hook post hook in mongoose for middleware
 userSchema.pre("save", async function (next) {
-  if (!this.modified("password")) return next();
+  if (!this.isModified("password")) return next();
   this.password = await bcrypt.hash(this.password, 10);
   next();
 });
