@@ -68,3 +68,6 @@ public/static/
 
 # Test output
 test-
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md

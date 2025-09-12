@@ -5,6 +5,23 @@ import { uploadOnCloudinary, deleteOnCloudinary } from "../utils/cloudinary.js";
 import { apiResponse } from "../utils/apiResponse.js";
 import logger from "../logger.js";
 
+const generateAcessAndRefreshToken = async (userId) => {
+  try {
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new ApiError(404, "User not found");
+    }
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+    return { accessToken, refreshToken };
+  } catch (error) {
+    logger.error("Error in generateAcessAndRefreshToken:", error);
+    throw new ApiError(500, "something went wrong while generating access and refresh token");
+  }
+};
+
 const registerUser = asyncHandler(async (req, res) => {
   //
   const { fullname, email, username, password } = req.body;
@@ -28,16 +45,11 @@ const registerUser = asyncHandler(async (req, res) => {
   if (!avatarLocalpath) {
     throw new ApiError(400, "avatar file is missing");
   }
-  // const avatar = await uploadOnCloudinary(avatarLocalpath);
-  // let coverImage = "";
-  // if (coverImageLocalpath) {
-  //   coverImage = await uploadOnCloudinary(coverImageLocalpath);
-  // }
 
   let avatar;
   try {
     avatar = await uploadOnCloudinary(avatarLocalpath);
-    logger.info(`file uploaded on cloudinary` + avatar);
+    logger.info(`file uploaded on cloudinary` + toString(avatar));
   } catch (error) {
     logger.error(`Error while uploading avatar`, error);
     throw new ApiError(500, "something went wrong while uploading avatar");
@@ -46,7 +58,7 @@ const registerUser = asyncHandler(async (req, res) => {
   let coverImage;
   try {
     coverImage = await uploadOnCloudinary(coverImageLocalpath);
-    logger.info(`file uploaded on cloudinary` + coverImage);
+    logger.info(`file uploaded on cloudinary` + toString(coverImage));
   } catch (error) {
     logger.error(`Error while uploading coverImage`, error);
     throw new ApiError(500, "something went wrong while uploading coverImage");
@@ -76,6 +88,10 @@ const registerUser = asyncHandler(async (req, res) => {
     }
     throw new ApiError(500, "something went wrong while registering user & images were deleted");
   }
+});
+
+const loginUser = asyncHandler(async (req, res) => {
+  
 });
 
 export { registerUser };
