@@ -7,7 +7,7 @@ const healthCheck = asyncHandler(async (req, res) => {
 
   const response = new apiResponse(200, "ok", "Health check passed");
 
- res.status(200).json(response);
+  res.status(200).json(response);
 
   logger.info(`Response sent with status: ${res.statusCode}`);
 });

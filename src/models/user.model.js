@@ -51,13 +51,21 @@ const userSchema = new Schema(
 );
 //never and never use aroow function in pre hook post hook in mongoose for middleware
 userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  this.password = await bcrypt.hash(this.password, 10);
-  next();
+  try {
+    if (!this.isModified("password")) return next();
+    this.password = await bcrypt.hash(this.password, 10);
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
-userSchema.methods.isPasswordCorrect = async function () {
-  return await bcrypt.compare(password, this.password);
+userSchema.methods.isPasswordCorrect = async function (password) {
+  try {
+    return await bcrypt.compare(password, this.password);
+  } catch (error) {
+    throw new Error("Password comparison failed");
+  }
 };
 
 userSchema.methods.generateAccessToken = function () {
