@@ -135,6 +135,29 @@ const loginUser = asyncHandler(async (req, res) => {
     );
 });
 
+const logoutUser = asyncHandler(async (req, res) => {
+  await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      $unset: {
+        refreshToken: "", // Using "" is perfectly valid and removes the field
+      },
+    },
+    {
+      new: true,
+    },
+  );
+  const options = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+  };
+  return res
+    .status(200)
+    .clearCookie("accessToken", options)
+    .clearCookie("refreshToken", options)
+    .json(new apiResponse(200, {}, "User logged out successfully"));
+});
+
 const refreshTokenAccessToken = asyncHandler(async (req, res) => {
   // 1. Get the refresh token from cookies (more secure) or request body
   const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
@@ -180,4 +203,4 @@ const refreshTokenAccessToken = asyncHandler(async (req, res) => {
   }
 });
 
-export { registerUser, loginUser, refreshTokenAccessToken };
+export { registerUser, loginUser, logoutUser, refreshTokenAccessToken };
