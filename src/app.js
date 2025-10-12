@@ -7,7 +7,7 @@ import { errorHandler } from "./middlwares/errors.middlewares.js";
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN,
-    Credential: true,
+    credentials: true,
   }),
 );
 //common middleware
