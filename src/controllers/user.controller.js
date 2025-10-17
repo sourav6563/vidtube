@@ -286,10 +286,96 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
 });
 
 const getUserProfile = asyncHandler(async (req, res) => {
-  
+  const { username } = req.params;
+  if (!username?.trim()) {
+    throw new ApiError(400, `username is required`);
+  }
+  const channel = await User.aggregate([
+    {
+      $match: {
+        username: username?.trim().toLowerCase(),
+      },
+    },
+    {
+      $lookup: {
+        from: "subscriptions", // Corrected collection name
+        localField: "_id",
+        foreignField: "channel",
+        as: "subscribers", // All documents from 'subscriptions' where this user is the channel
+      },
+    },
+    {
+      $lookup: {
+        from: "subscriptions", // Corrected collection name
+        localField: "_id",
+        foreignField: "subscriber",
+        as: "subscribedTo",
+      },
+    },
+    {
+      $addFields: {
+        subscribersCount: {
+          $size: "$subscribers",
+        },
+        channelsSubscribedToCount: {
+          $size: "$subscribedTo",
+        },
+        isSubscribed: {
+          $cond: {
+            if: { $in: [req.user?._id, "$subscribers.subscriber"] },
+            then: true,
+            else: false,
+          },
+        },
+      },
+    },
+  ]);
+  if (!channel?.length) {
+    throw new ApiError(404, "User not found");
+  }
+
+  return res
+    .status(200)
+    .json(new apiResponse(200, channel[0], "User profile fetched successfully"));
 });
 
-const getWatchHistory = asyncHandler(async (res, res) => {});
+const getWatchHistory = asyncHandler(async (req, res) => {
+  const user = await User.aggregate([
+    {
+      $match: {
+        _id: new mongoose.Types.ObjectId(req.req.user?._id),
+      },
+    },
+    {
+      $lookup: {
+        from: "videos",
+        localField: "watchHistory",
+        foreignField: "_id",
+        as: "watchHistory",
+        pipeline: [
+          {
+            $lookup: {
+              from: "users",
+              localField: "owner",
+              foreignField: "_id",
+              as: "owner",
+              pipeline: [
+                {
+                  $project: {
+                    fullname: 1,
+                    username: 1,
+                    email: 1,
+                    avatar: 1,
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ]);
+});
 
 export {
   registerUser,
@@ -299,4 +385,5 @@ export {
   changeCurrentPassword,
   getCurrentUser,
   updateAccountDetails,
+  getUserProfile,
 };
