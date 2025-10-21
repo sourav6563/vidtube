@@ -4,6 +4,7 @@ import { User } from "../models/user.model.js";
 import { uploadOnCloudinary, deleteOnCloudinary } from "../utils/cloudinary.js";
 import { apiResponse } from "../utils/apiResponse.js";
 import logger from "../logger.js";
+import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 
 const generateAccessAndRefreshToken = async (userId) => {
@@ -198,6 +199,7 @@ const refreshTokenAccessToken = asyncHandler(async (req, res) => {
           "access token Regenerated successfully",
         ),
       );
+  // eslint-disable-next-line no-unused-vars
   } catch (error) {
     throw new ApiError(500, "something went wrong while regenerating access token");
   }
@@ -340,10 +342,10 @@ const getUserProfile = asyncHandler(async (req, res) => {
 });
 
 const getWatchHistory = asyncHandler(async (req, res) => {
-  const user = await User.aggregate([
+  const userWithHistory = await User.aggregate([
     {
       $match: {
-        _id: new mongoose.Types.ObjectId(req.req.user?._id),
+        _id: new mongoose.Types.ObjectId(req.user?._id),
       },
     },
     {
@@ -364,19 +366,38 @@ const getWatchHistory = asyncHandler(async (req, res) => {
                   $project: {
                     fullname: 1,
                     username: 1,
-                    email: 1,
                     avatar: 1,
                   },
                 },
               ],
             },
           },
+          {
+            $addFields: {
+              owner: {
+                $first: "$owner",
+              },
+            },
+          },
         ],
       },
     },
   ]);
-});
 
+  // The aggregation pipeline returns an array, even if only one document is matched.
+  // We check if the array is empty, which means the user was not found.
+  if (!userWithHistory?.length) {
+    throw new ApiError(404, "User not found or watch history is empty");
+  }
+
+  // Access the first (and only) element of the array to get the user document,
+  // then extract the watchHistory from it.
+  return res
+    .status(200)
+    .json(
+      new apiResponse(200, userWithHistory[0].watchHistory, "Watch history fetched successfully"),
+    );
+});
 export {
   registerUser,
   loginUser,
@@ -386,4 +407,7 @@ export {
   getCurrentUser,
   updateAccountDetails,
   getUserProfile,
+  getWatchHistory,
+  updateUserAvatar,
+  updateUserCoverImage,
 };
