@@ -31,7 +31,7 @@ const registerUser = asyncHandler(async (req, res) => {
 
   //validation
   //if yu have time learn zod or other validation library
-  if ([fullname, email, username, password].some((field) => field?.trim() === "")) {
+  if ([fullname, email, username, password].some((field) => !field || field?.trim() === "")) {
     throw new ApiError(400, "All fields are required");
   }
   const existedUser = await User.findOne({
@@ -51,19 +51,24 @@ const registerUser = asyncHandler(async (req, res) => {
   let avatar;
   try {
     avatar = await uploadOnCloudinary(avatarLocalpath);
-    logger.info(`file uploaded on cloudinary` + toString(avatar));
+    logger.info(`file uploaded on cloudinary: ${JSON.stringify(avatar)}`);
   } catch (error) {
     logger.error(`Error while uploading avatar`, error);
     throw new ApiError(500, "something went wrong while uploading avatar");
   }
 
-  let coverImage;
-  try {
-    coverImage = await uploadOnCloudinary(coverImageLocalpath);
-    logger.info(`file uploaded on cloudinary` + toString(coverImage));
-  } catch (error) {
-    logger.error(`Error while uploading coverImage`, error);
-    throw new ApiError(500, "something went wrong while uploading coverImage");
+  // Only upload cover image if provided
+  let coverImage = null;
+  if (coverImageLocalpath) {
+    try {
+      coverImage = await uploadOnCloudinary(coverImageLocalpath);
+      logger.info(`file uploaded on cloudinary: ${JSON.stringify(coverImage)}`);
+    } catch (error) {
+      logger.error(`Error while uploading coverImage`, error);
+      // delete avatar since user creation will not proceed
+      if (avatar) await deleteOnCloudinary(avatar.public_id);
+      throw new ApiError(500, "something went wrong while uploading coverImage");
+    }
   }
 
   try {
@@ -79,7 +84,7 @@ const registerUser = asyncHandler(async (req, res) => {
     if (!createdUser) {
       throw new ApiError(500, "something went wrong while registering user");
     }
-    return res.status(201).json(new apiResponse(200, createdUser, "User registered successfully"));
+    return res.status(201).json(new apiResponse(201, createdUser, "User registered successfully"));
   } catch (error) {
     logger.error(`Error while creating user`, error);
     if (avatar) {
@@ -194,12 +199,13 @@ const refreshTokenAccessToken = asyncHandler(async (req, res) => {
       .cookie("accessToken", newAccessToken, options)
       .cookie("refreshToken", newRefreshToken, options)
       .json(
-        new apiResponse(
+        new apiResponse( // Changed: Added 200 status code as the first argument
+          200,
           { accessToken: newAccessToken, refreshToken: newRefreshToken },
           "access token Regenerated successfully",
         ),
       );
-  // eslint-disable-next-line no-unused-vars
+    // eslint-disable-next-line no-unused-vars
   } catch (error) {
     throw new ApiError(500, "something went wrong while regenerating access token");
   }
@@ -259,9 +265,11 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
 
   const user = await User.findByIdAndUpdate(
     req.user?._id,
-    { $set: avatar.url },
+    { $set: { avatar: avatar.url } }, // Changed: Corrected update object
     { new: true },
   ).select("-password -refreshToken");
+
+  if (!user) throw new ApiError(404, "User not found after avatar update"); // Added: Check if user exists
 
   return res.status(200).json(new apiResponse(200, user, "User avatar updated successfully"));
 });
@@ -280,7 +288,7 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
 
   const user = await User.findByIdAndUpdate(
     req.user?._id,
-    { $set: coverImage.url },
+    { $set: { coverImage: coverImage.url } },
     { new: true },
   ).select("-password -refreshToken");
 

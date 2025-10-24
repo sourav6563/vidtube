@@ -7,6 +7,10 @@ const videoSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "User",
     },
+    videoFile: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+    },
     thumbnail: {
       type: String,
       required: [true],
@@ -36,5 +40,6 @@ const videoSchema = new Schema(
 );
 
 videoSchema.plugin(mongooseAggregatePaginate);
+videoSchema.index({ title: "text", description: "text" });
 
 export const Video = model("Video", videoSchema);

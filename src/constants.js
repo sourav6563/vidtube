@@ -1,3 +1,4 @@
-
- const DB_NAME = "vidtube";
- export {DB_NAME}
+const DB_NAME = "vidtube";
+const IMAGE_SIZE_LIMIT = 5 * 1024 * 1024; // 5 MB
+const VIDEO_SIZE_LIMIT = 50 * 1024 * 1024; // 50 MB
+export { DB_NAME, IMAGE_SIZE_LIMIT, VIDEO_SIZE_LIMIT };
