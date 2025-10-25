@@ -68,23 +68,23 @@ const uploadVideo = asyncHandler(async (req, res) => {
   const videoFile = req.files?.video?.[0];
   const thumbnailFile = req.files?.thumbnail?.[0];
   if (!videoFile?.path || !thumbnailFile?.path) {
-    return apiResponse(res, 400, "Video and thumbnail are required", null);
+    throw new ApiError(400, "Video and thumbnail files are required");
   }
   const allowedVideoTypes = ["video/mp4", "video/mpeg"];
   const allowedImageTypes = ["image/jpeg", "image/png"];
   if (!allowedVideoTypes.includes(videoFile?.mimetype)) {
-    return apiResponse(res, 400, "Invalid video file type", null);
+    throw new ApiError(400, "Invalid video file type. Only mp4 and mpeg are allowed.");
   }
   if (!allowedImageTypes.includes(thumbnailFile?.mimetype)) {
-    return apiResponse(res, 400, "Invalid thumbnail file type", null);
+    throw new ApiError(400, "Invalid thumbnail file type. Only jpeg and png are allowed.");
   }
   const maxVideoSize = 100 * 1024 * 1024; // 100MB
   const maxThumbnailSize = 5 * 1024 * 1024; // 5MB
   if (videoFile?.size > maxVideoSize) {
-    return apiResponse(res, 400, "Video file size exceeds 100MB limit", null);
+    throw new ApiError(400, "Video file size exceeds 100MB limit");
   }
   if (thumbnailFile?.size > maxThumbnailSize) {
-    return apiResponse(res, 400, "Thumbnail file size exceeds 5MB limit", null);
+    throw new ApiError(400, "Thumbnail file size exceeds 5MB limit");
   }
   let videoUploadResult = null;
   let thumbnailUploadResult = null;
@@ -124,22 +124,28 @@ const uploadVideo = asyncHandler(async (req, res) => {
     if (!createdVideo) {
       throw new ApiError(500, "Failed to create video in the database");
     }
-    return apiResponse(res, 201, "Video uploaded successfully", createdVideo);
+    return res.status(201).json(new apiResponse(201, createdVideo, "Video uploaded successfully"));
   } catch (error) {
     logger.error(`Error in uploadVideo: ${error.message}`);
-    if (!videoUploadResult) {
+
+    // Cleanup: If any file was successfully uploaded before the error, delete it from Cloudinary.
+    if (videoUploadResult?.public_id) {
       await deleteOnCloudinary(videoUploadResult.public_id);
     }
-    if (!thumbnailUploadResult) {
-      await deleteOnCloudinary(videoUploadResult.public_id);
+    if (thumbnailUploadResult?.public_id) {
+      await deleteOnCloudinary(thumbnailUploadResult.public_id);
     }
 
-    throw new ApiError(500, "Error while saving video and thumbnail to database");
+    // Forward the error to the central error handler.
+    throw new ApiError(
+      500,
+      error.message || "An unexpected error occurred while uploading the video.",
+    );
   }
 });
 
 const getAllVideos = asyncHandler(async (req, res) => {
-  let { page = 1, limit = 10, query, sortBy = "createdAt", setOrder = "desc" } = req.query;
+  let { page = 1, limit = 10, query, sortBy = "createdAt", sortOrder = "desc" } = req.query;
 
   //validate and sanitize page limit
   page = Math.max(1, parseInt(page, 10) || 1);
@@ -147,8 +153,84 @@ const getAllVideos = asyncHandler(async (req, res) => {
 
   const filter = { isPublished: true };
 
+  const allowedSortFields = ["createdAt", "views", "duration", "title"];
+  const sortOptions = {};
+
+  sortBy
+    .split(",")
+    .map((f) => f.trim())
+    .filter((f) => allowedSortFields.includes(f))
+    .forEach((field) => {
+      sortOptions[field] = sortOrder === "desc" ? -1 : 1;
+    });
+
   if (query) {
+    // textScore must come first for relevance sorting
+    filter.$text = { $search: query };
+    sortOptions.score = { $meta: "textScore" };
+  }
+
+  if (Object.keys(sortOptions).length === 0) {
+    sortOptions.createdAt = -1;
+  }
+  try {
+    const aggregate = Video.aggregate([
+      {
+        $match: filter,
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "owner",
+          foreignField: "_id",
+          as: "owner",
+          pipeline: [
+            {
+              $project: {
+                username: 1,
+                fullname: 1,
+                avatar: 1,
+              },
+            },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          owner: { $first: "$owner" },
+        },
+      },
+      {
+        $sort: sortOptions,
+      },
+    ]);
+    const options = {
+      page,
+      limit,
+    };
+    const results = await Video.aggregatePaginate(aggregate, options);
+    if (!results.docs.length) {
+      return res.status(404).json(new apiResponse(404, { results: [] }, "No videos found"));
+    }
+
+    return res.status(200).json(
+      new apiResponse(
+        200,
+        {
+          videos: results.docs,
+          totalDocs: results.totalDocs,
+          totalPages: results.totalPages,
+          currentPage: results.page,
+          hasNextPage: results.hasNextPage,
+          hasPrevPage: results.hasPrevPage,
+        },
+        "Videos fetched successfully",
+      ),
+    );
+  } catch (error) {
+    logger.error("Error in getAllVideos:", error);
+    throw new ApiError(500, "Error while fetching videos");
   }
 });
 
-export { uploadVideo };
+export { uploadVideo, getAllVideos };

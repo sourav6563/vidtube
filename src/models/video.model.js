@@ -8,8 +8,8 @@ const videoSchema = new Schema(
       ref: "User",
     },
     videoFile: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
+      type: String, // URL from Cloudinary
+      required: [true, "Video file URL is required"],
     },
     thumbnail: {
       type: String,
