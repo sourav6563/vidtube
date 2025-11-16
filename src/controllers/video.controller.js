@@ -2,6 +2,8 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/apiError.js";
 import { Video } from "../models/video.model.js";
 import { User } from "../models/user.model.js";
+import { Like } from "../models/like.model.js";
+import { Comment } from "../models/comment.model.js";
 import { uploadOnCloudinary, deleteOnCloudinary } from "../utils/cloudinary.js";
 import { apiResponse } from "../utils/apiResponse.js";
 import logger from "../logger.js";
@@ -147,92 +149,106 @@ const uploadVideo = asyncHandler(async (req, res) => {
 });
 
 const getAllVideos = asyncHandler(async (req, res) => {
-  let { page = 1, limit = 10, query, sortBy = "createdAt", sortOrder = "desc" } = req.query;
+  const { page = 1, limit = 10, query = "", sortBy = "createdAt", sortOrder = "desc" } = req.query;
 
-  //validate and sanitize page limit
-  page = Math.max(1, parseInt(page, 10) || 1);
-  limit = Math.min(100, parseInt(limit, 10) || 10);
+  const pageNum = Math.max(1, parseInt(page));
+  const limitNum = Math.min(100, parseInt(limit));
 
   const filter = { isPublished: true };
+
+  if (query.trim()) {
+    filter.$text = { $search: query.trim() };
+  }
 
   const allowedSortFields = ["createdAt", "views", "duration", "title"];
   const sortOptions = {};
 
-  sortBy
-    .split(",")
-    .map((f) => f.trim())
-    .filter((f) => allowedSortFields.includes(f))
-    .forEach((field) => {
-      sortOptions[field] = sortOrder === "desc" ? -1 : 1;
-    });
+  if (allowedSortFields.includes(sortBy)) {
+    sortOptions[sortBy] = sortOrder === "asc" ? 1 : -1;
+  } else {
+    sortOptions.createdAt = -1;
+  }
 
   if (query) {
-    // textScore must come first for relevance sorting
-    filter.$text = { $search: query };
     sortOptions.score = { $meta: "textScore" };
   }
 
-  if (Object.keys(sortOptions).length === 0) {
-    sortOptions.createdAt = -1;
-  }
   try {
     const aggregate = Video.aggregate([
-      {
-        $match: filter,
-      },
+      { $match: filter },
+
       {
         $lookup: {
           from: "users",
           localField: "owner",
           foreignField: "_id",
           as: "owner",
-          pipeline: [
-            {
-              $project: {
-                username: 1,
-                fullname: 1,
-                avatar: 1,
-              },
-            },
-          ],
+          pipeline: [{ $project: { username: 1, fullname: 1, avatar: 1 } }],
         },
       },
-      {
-        $addFields: {
-          owner: { $first: "$owner" },
-        },
-      },
-      {
-        $sort: sortOptions,
-      },
-    ]);
-    const options = {
-      page,
-      limit,
-    };
-    const results = await Video.aggregatePaginate(aggregate, options);
-    if (!results.docs.length) {
-      return res.status(404).json(new apiResponse(404, { results: [] }, "No videos found"));
-    }
 
-    return res.status(200).json(
-      new apiResponse(
-        200,
-        {
-          videos: results.docs,
-          totalDocs: results.totalDocs,
-          totalPages: results.totalPages,
-          currentPage: results.page,
-          hasNextPage: results.hasNextPage,
-          hasPrevPage: results.hasPrevPage,
-        },
-        "Videos fetched successfully",
-      ),
-    );
+      { $addFields: { owner: { $first: "$owner" } } },
+      { $sort: sortOptions },
+    ]);
+
+    const results = await Video.aggregatePaginate(aggregate, {
+      page: pageNum,
+      limit: limitNum,
+    });
+
+    return res.status(200).json(new apiResponse(200, results, "Videos fetched"));
   } catch (error) {
-    logger.error("Error in getAllVideos:", error);
-    throw new ApiError(500, "Error while fetching videos");
+    logger.error("getAllVideos error:", error);
+    throw new ApiError(500, "Failed to fetch videos");
   }
 });
 
-export { uploadVideo, getAllVideos };
+const getVideoById = asyncHandler(async (req, res) => {
+  const { videoId } = req.params;
+  const userId = req.user?._id;
+
+  if (!mongoose.isValidObjectId(videoId)) {
+    throw new ApiError(400, "Invalid video id");
+  }
+  const video = await Video.findById(videoId).populate("owner", "username fullname avatar").lean();
+  if (!video) {
+    throw new ApiError(404, "Video not found");
+  }
+  Video.updateOne(
+    {
+      _id: videoId,
+    },
+    {
+      $inc: { views: 1 },
+    },
+  ).catch((err) => logger.error(`View Increament failed`, err));
+
+  User.updateOne(
+    {
+      _id: userId,
+    },
+    {
+      $addToSet: {
+        watchHistory: videoId,
+      },
+    },
+  ).catch((err) => logger.error(`history update failed`, err));
+
+  const [likeCount, commentCount] = await Promise.all([
+    Like.countDocuments({ video: videoId }),
+    Comment.countDocuments({ video: videoId }),
+  ]);
+
+  return res
+    .status(200)
+    .json(
+      new apiResponse(
+        200,
+        { ...video, views: video.views + 1, likeCount, commentCount },
+        "Video fetched successfully",
+      ),
+    );
+});
+
+
+export { uploadVideo, getAllVideos, getVideoById };
