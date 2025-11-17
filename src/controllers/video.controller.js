@@ -54,97 +54,119 @@ VideoController
 */
 
 const uploadVideo = asyncHandler(async (req, res) => {
-  const owner = req.user._id;
-  if (!owner) {
-    throw new ApiError(401, "unauthorized");
-  }
-  const { title, description, duration } = req.body;
-  if (!title?.trim() || title.length < 3 || title.length > 100) {
+  const owner = req.user?._id;
+
+  // Extract + trim text fields
+  const title = req.body.title?.trim();
+  const description = req.body.description?.trim();
+
+  // Validate title + description
+  if (!title || title.length < 3 || title.length > 100) {
     throw new ApiError(400, "Title must be between 3 and 100 characters");
   }
-  if (!description?.trim() || description.length < 10 || description.length > 1000) {
+
+  if (!description || description.length < 10 || description.length > 1000) {
     throw new ApiError(400, "Description must be between 10 and 1000 characters");
   }
-  if (!Number.isFinite(Number(duration)) || Number(duration) <= 0) {
-    throw new ApiError(400, "Duration must be a positive number");
-  }
 
+  // Extract uploaded files
   const videoFile = req.files?.video?.[0];
   const thumbnailFile = req.files?.thumbnail?.[0];
+
   if (!videoFile?.path || !thumbnailFile?.path) {
     throw new ApiError(400, "Video and thumbnail files are required");
   }
+
+  // Validate video and thumbnail files
+
   const allowedVideoTypes = ["video/mp4", "video/mpeg"];
   const allowedImageTypes = ["image/jpeg", "image/png"];
-  if (!allowedVideoTypes.includes(videoFile?.mimetype)) {
-    throw new ApiError(400, "Invalid video file type. Only mp4 and mpeg are allowed.");
+
+  if (!allowedVideoTypes.includes(videoFile.mimetype)) {
+    throw new ApiError(400, "Invalid video file type. Only mp4 or mpeg allowed.");
   }
-  if (!allowedImageTypes.includes(thumbnailFile?.mimetype)) {
-    throw new ApiError(400, "Invalid thumbnail file type. Only jpeg and png are allowed.");
+
+  if (!allowedImageTypes.includes(thumbnailFile.mimetype)) {
+    throw new ApiError(400, "Invalid thumbnail type. Only jpeg or png allowed.");
   }
+
   const maxVideoSize = 100 * 1024 * 1024; // 100MB
   const maxThumbnailSize = 5 * 1024 * 1024; // 5MB
-  if (videoFile?.size > maxVideoSize) {
-    throw new ApiError(400, "Video file size exceeds 100MB limit");
+
+  if (videoFile.size > maxVideoSize) {
+    throw new ApiError(400, "Video file exceeds 100MB size limit");
   }
-  if (thumbnailFile?.size > maxThumbnailSize) {
-    throw new ApiError(400, "Thumbnail file size exceeds 5MB limit");
+
+  if (thumbnailFile.size > maxThumbnailSize) {
+    throw new ApiError(400, "Thumbnail exceeds 5MB size limit");
   }
+
   let videoUploadResult = null;
   let thumbnailUploadResult = null;
+
   try {
+    // Upload video + thumbnail in parallel
     [videoUploadResult, thumbnailUploadResult] = await Promise.all([
-      uploadOnCloudinary(videoFile?.path).catch((error) => {
-        logger.error(`Error uploading video to Cloudinary: ${error}`);
-        throw new ApiError(500, "Failed to upload video to Cloudinary");
+      uploadOnCloudinary(videoFile.path).catch((err) => {
+        logger.error("Cloudinary video upload failed:", err);
+        throw new ApiError(500, "Failed to upload video");
       }),
-      uploadOnCloudinary(thumbnailFile?.path).catch((error) => {
-        logger.error(`Error uploading thumbnail to Cloudinary: ${error}`);
-        throw new ApiError(500, "Failed to upload thumbnail to Cloudinary");
+
+      uploadOnCloudinary(thumbnailFile.path).catch((err) => {
+        logger.error("Cloudinary thumbnail upload failed:", err);
+        throw new ApiError(500, "Failed to upload thumbnail");
       }),
     ]);
 
     if (!videoUploadResult?.url || !thumbnailUploadResult?.url) {
-      throw new ApiError(500, "Failed to upload files to Cloudinary");
+      throw new ApiError(500, "File upload to Cloudinary failed");
     }
 
     logger.info(
-      `Files uploaded by user ${owner}: video=${videoUploadResult.url}, thumbnail=${thumbnailUploadResult.url}`,
+      `User ${owner} uploaded files: video=${videoUploadResult.url}, thumbnail=${thumbnailUploadResult.url}`,
     );
 
-    const video = await Video.create({
+    // Create video record in MongoDB
+
+    const newVideo = await Video.create({
       owner,
-      videoFile: videoUploadResult.url,
-      thumbnail: thumbnailUploadResult.url,
-      title: title.trim(),
-      description: description.trim(),
-      duration: Number(duration),
+      videoFile: {
+        url: videoUploadResult.url,
+        public_id: videoUploadResult.public_id,
+      },
+      thumbnail: {
+        url: thumbnailUploadResult.url,
+        public_id: thumbnailUploadResult.public_id,
+      },
+      title,
+      description,
+      duration: videoUploadResult.duration, // Auto-from Cloudinary
       isPublished: false,
     });
-    const createdVideo = await Video.findById(video._id).populate(
+
+    const createdVideo = await Video.findById(newVideo._id).populate(
       "owner",
       "username fullname avatar",
     );
+
     if (!createdVideo) {
-      throw new ApiError(500, "Failed to create video in the database");
+      throw new ApiError(500, "Video saved but failed to retrieve");
     }
+
     return res.status(201).json(new apiResponse(201, createdVideo, "Video uploaded successfully"));
   } catch (error) {
-    logger.error(`Error in uploadVideo: ${error.message}`);
+    // Rollback new uploads if DB create failed
+    logger.error("uploadVideo error:", error.message);
 
-    // Cleanup: If any file was successfully uploaded before the error, delete it from Cloudinary.
     if (videoUploadResult?.public_id) {
-      await deleteOnCloudinary(videoUploadResult.public_id);
-    }
-    if (thumbnailUploadResult?.public_id) {
-      await deleteOnCloudinary(thumbnailUploadResult.public_id);
+      await deleteOnCloudinary(videoUploadResult.public_id).catch(() => {});
     }
 
-    // Forward the error to the central error handler.
-    throw new ApiError(
-      500,
-      error.message || "An unexpected error occurred while uploading the video.",
-    );
+    if (thumbnailUploadResult?.public_id) {
+      await deleteOnCloudinary(thumbnailUploadResult.public_id).catch(() => {});
+    }
+
+    throw new ApiError(500, error.message || "Unexpected error occurred while uploading");
   }
 });
 
@@ -250,5 +272,189 @@ const getVideoById = asyncHandler(async (req, res) => {
     );
 });
 
+const updateVideo = asyncHandler(async (req, res) => {
+  const { videoId } = req.params;
+  const ownerId = req.user?._id;
+  const { title, description } = req.body;
 
-export { uploadVideo, getAllVideos, getVideoById };
+  if (!mongoose.isValidObjectId(videoId)) {
+    throw new ApiError(400, "Invalid video id");
+  }
+
+  const video = await Video.findById(videoId);
+  if (!video) throw new ApiError(404, "Video not found");
+
+  if (video.owner.toString() !== ownerId.toString()) {
+    throw new ApiError(403, "You can only update your own videos");
+  }
+
+  // ---------------------------------------
+  // Optional field validation (CORRECT)
+  // ---------------------------------------
+  if (title !== undefined) {
+    const t = title.trim();
+    if (!t || t.length < 3 || t.length > 100) {
+      throw new ApiError(400, "Title must be 3–100 chars");
+    }
+  }
+
+  if (description !== undefined) {
+    const d = description.trim();
+    if (!d || d.length < 10 || d.length > 1000) {
+      throw new ApiError(400, "Description must be 10–1000 chars");
+    }
+  }
+
+  const videoFile = req.files?.video?.[0];
+  const thumbnailFile = req.files?.thumbnail?.[0];
+
+  // ---------------------------------------
+  // Validate only if files exist
+  // ---------------------------------------
+  if (videoFile) {
+    const allowedVideoTypes = ["video/mp4", "video/mpeg"];
+    if (!allowedVideoTypes.includes(videoFile.mimetype)) {
+      throw new ApiError(400, "Invalid video type");
+    }
+    if (videoFile.size > 100 * 1024 * 1024) {
+      throw new ApiError(400, "Video too large (max 100MB)");
+    }
+  }
+
+  if (thumbnailFile) {
+    const allowedImageTypes = ["image/jpeg", "image/png"];
+    if (!allowedImageTypes.includes(thumbnailFile.mimetype)) {
+      throw new ApiError(400, "Invalid thumbnail type");
+    }
+    if (thumbnailFile.size > 5 * 1024 * 1024) {
+      throw new ApiError(400, "Thumbnail too large (max 5MB)");
+    }
+  }
+
+  let videoUploadResult = null;
+  let thumbnailUploadResult = null;
+
+  try {
+    // ---------------------------------------
+    // Upload only existing files
+    // ---------------------------------------
+    if (videoFile) {
+      videoUploadResult = await uploadOnCloudinary(videoFile.path);
+    }
+
+    if (thumbnailFile) {
+      thumbnailUploadResult = await uploadOnCloudinary(thumbnailFile.path);
+    }
+
+    // ---------------------------------------
+    // Build updateData
+    // ---------------------------------------
+    const updateData = {
+      ...(title !== undefined && { title: title.trim() }),
+      ...(description !== undefined && { description: description.trim() }),
+      ...(videoUploadResult && {
+        videoFile: {
+          url: videoUploadResult.url,
+          public_id: videoUploadResult.public_id,
+        },
+        duration: videoUploadResult.duration,
+      }),
+      ...(thumbnailUploadResult && {
+        thumbnail: {
+          url: thumbnailUploadResult.url,
+          public_id: thumbnailUploadResult.public_id,
+        },
+      }),
+    };
+
+    const updatedVideo = await Video.findByIdAndUpdate(videoId, updateData, {
+      new: true,
+      runValidators: true,
+    }).populate("owner", "username fullname avatar");
+
+    if (!updatedVideo) {
+      throw new ApiError(500, "Failed to update video");
+    }
+
+    // ---------------------------------------
+    // Delete old Cloudinary files (if replaced)
+    // ---------------------------------------
+    if (videoUploadResult) {
+      deleteOnCloudinary(video.videoFile.public_id).catch(() => {});
+    }
+
+    if (thumbnailUploadResult) {
+      deleteOnCloudinary(video.thumbnail.public_id).catch(() => {});
+    }
+
+    return res.status(200).json(new apiResponse(200, updatedVideo, "Video updated successfully"));
+  } catch (error) {
+    // Rollback new uploads if DB update failed
+    if (videoUploadResult?.public_id) {
+      deleteOnCloudinary(videoUploadResult.public_id).catch(() => {});
+    }
+    if (thumbnailUploadResult?.public_id) {
+      deleteOnCloudinary(thumbnailUploadResult.public_id).catch(() => {});
+    }
+
+    throw new ApiError(500, error.message || "Failed to update video");
+  }
+});
+
+const deleteVideo = asyncHandler(async (req, res) => {
+  const { videoId } = req.params;
+  const userId = req.user?._id;
+
+  // 1. Fix: Add (videoId) + toString()
+  if (!mongoose.isValidObjectId(videoId)) {
+    throw new ApiError(400, "Invalid video ID");
+  }
+
+  // 2. Fix: await + ownership in one query (best practice)
+  const video = await Video.findById(videoId);
+
+  if (!video) {
+    throw new ApiError(404, "Video not found");
+  }
+
+  if (video.owner.toString() !== userId.toString()) {
+    throw new ApiError(403, "You are not authorized to delete this video");
+  }
+
+  const videoPid = video.videoFile?.public_id;
+  const thumbPid = video.thumbnail?.public_id;
+
+  try {
+    // Delete from Cloudinary FIRST (prevents orphans if DB fails)
+    await Promise.all([
+      videoPid ? deleteOnCloudinary(videoPid) : Promise.resolve(),
+      thumbPid ? deleteOnCloudinary(thumbPid) : Promise.resolve(),
+    ]).catch((err) => {
+      logger.warn(`Cloudinary cleanup partial failure for video ${videoId}`, err);
+      // Don't throw — video is already gone from DB soon
+    });
+
+    // Now delete from DB
+    await Video.findByIdAndDelete(videoId);
+
+    // Cleanup related data (fire-and-forget)
+    Promise.all([
+      Like.deleteMany({ video: videoId }),
+      Comment.deleteMany({ video: videoId }),
+      User.updateMany({ watchHistory: videoId }, { $pull: { watchHistory: videoId } }),
+    ]).catch((err) => {
+      logger.warn(`Related data cleanup failed for video ${videoId}`, err);
+    });
+
+    logger.info(`Video deleted successfully | ID: ${videoId} | Owner: ${userId}`);
+
+    return res
+      .status(200)
+      .json(new apiResponse(200, { deletedVideoId: videoId }, "Video deleted successfully"));
+  } catch (error) {
+    logger.error(`deleteVideo critical failure | VideoID: ${videoId}`, error);
+    throw new ApiError(500, "Failed to delete video");
+  }
+});
+
+export { uploadVideo, getAllVideos, getVideoById, updateVideo, deleteVideo };
