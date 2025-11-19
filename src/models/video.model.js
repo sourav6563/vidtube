@@ -8,12 +8,13 @@ const videoSchema = new Schema(
       ref: "User",
     },
     videoFile: {
-      type: String, // URL from Cloudinary
-      required: [true, "Video file URL is required"],
+      url: { type: String, required: true },
+      public_id: { type: String, required: true },
     },
+
     thumbnail: {
-      type: String,
-      required: [true],
+      url: { type: String, required: true },
+      public_id: { type: String, required: true },
     },
     title: {
       type: String,

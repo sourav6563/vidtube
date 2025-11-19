@@ -64,7 +64,7 @@ prisma/migrations/
 docker-compose.override.yml
 
 # Static files
-public/static/
+public/temp
 
 # Test output
 test-
