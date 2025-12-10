@@ -8,7 +8,6 @@ import { uploadOnCloudinary, deleteOnCloudinary } from "../utils/cloudinary.js";
 import { apiResponse } from "../utils/apiResponse.js";
 import logger from "../logger.js";
 import mongoose from "mongoose";
-// import jwt from "jsonwebtoken";
 /*
 VideoController
  ├── uploadVideo()
